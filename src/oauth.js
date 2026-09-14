@@ -20,6 +20,7 @@ import express from "express";
 
 export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   const router = express.Router();
+  router.use(express.json({ limit: "1mb" }));
   router.use(express.urlencoded({ extended: true }));
 
   // Stockage en mémoire — suffisant pour un serveur mono-instance. Les codes
@@ -63,7 +64,8 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   // Claude/ChatGPT s'auto-enregistrent au premier ajout du connecteur.
   // ---------------------------------------------------------------------
   router.post("/oauth/register", (req, res) => {
-    const redirectUris = req.body.redirect_uris || [];
+    const body = req.body ?? {};
+    const redirectUris = body.redirect_uris || [];
     if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
       return res.status(400).json({ error: "invalid_client_metadata", error_description: "redirect_uris requis" });
     }
@@ -109,8 +111,13 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   });
 
   router.post("/oauth/authorize", async (req, res) => {
-    const { email, password, response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope } = req.body;
+    const body = req.body ?? {};
+    const { email, password, response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope } = body;
     const oauthParams = { response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope };
+
+    if (!email || !password || !response_type || !client_id || !redirect_uri || !code_challenge) {
+      return res.status(400).send(loginPageHtml({ ...oauthParams, error: "Paramètres OAuth manquants." }));
+    }
 
     try {
       // 1) Connexion Supabase Auth — exactement le même mécanisme que le site web.
@@ -165,7 +172,8 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   // l'étape précédente). Vérifie PKCE avant de la livrer.
   // ---------------------------------------------------------------------
   router.post("/oauth/token", (req, res) => {
-    const { grant_type, code, redirect_uri, code_verifier } = req.body;
+    const body = req.body ?? {};
+    const { grant_type, code, redirect_uri, code_verifier } = body;
 
     if (grant_type !== "authorization_code") {
       return res.status(400).json({ error: "unsupported_grant_type" });
