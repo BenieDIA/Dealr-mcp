@@ -197,6 +197,17 @@ const app = createMcpExpressApp(
     : { host: "0.0.0.0" } // pas de restriction de Host — pratique pour tester via un tunnel, à éviter en prod (préférer ALLOWED_HOSTS)
 );
 
+// Logger minimal — sans lui, aucune requête n'apparaît dans les logs Render,
+// ce qui rend le diagnostic à distance impossible. Volontairement basique
+// (pas de dépendance externe), juste assez pour voir CE QUI ARRIVE.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    console.log(`${req.method} ${req.path} -> ${res.statusCode} (${Date.now() - start}ms)`);
+  });
+  next();
+});
+
 app.use(createOAuthRouter({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY, publicUrl: PUBLIC_URL }));
 
 function unauthorized(res) {
