@@ -1,5 +1,5 @@
 # Serveur MCP DEALR (unifié, multi-utilisateurs via OAuth)
-
+Lien vers le network : https://beniedia.github.io/Dealr-Network/
 Un seul serveur MCP, une seule URL, déployé **UNE FOIS** — utilisable comme connecteur à la fois dans **Claude** et dans **ChatGPT** (Developer Mode).
 
 Chaque personne qui l'ajoute se connecte avec **son propre compte DEALR** au moment de l'autorisation OAuth — plus aucune clé API codée en dur dans l'environnement du serveur, et plus besoin d'un déploiement par utilisateur.
