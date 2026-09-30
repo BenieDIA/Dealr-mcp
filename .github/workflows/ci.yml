@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+      - run: npm test
+
+      # Vérifie aussi que le serveur démarre réellement (pas juste que la
+      # syntaxe est correcte) — détecte les erreurs qui n'apparaissent qu'à
+      # l'exécution (import cassé, variable manquante, etc.).
+      - name: Vérifie que le serveur démarre
+        run: |
+          DEALR_BASE_URL=https://example.supabase.co \
+          SUPABASE_ANON_KEY=test-key \
+          PUBLIC_URL=http://localhost:3000 \
+          PORT=3000 \
+          timeout 5 node src/index.js || [ $? -eq 124 ]
+          # code 124 = timeout atteint = le serveur tournait toujours, donc il a bien démarré

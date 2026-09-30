@@ -13,9 +13,9 @@
 // obtient est directement une clé dlr_live_..., propre à lui, utilisée pour
 // CHAQUE appel /mcp qu'il fait — un seul déploiement sert tout le monde.
 //
-// 8 outils, alignés sur l'API DEALR réelle (Edge Functions /discovery,
-// /negotiate, /negotiations, /transaction-room) :
-//   dealr_search, dealr_get_listing, dealr_start_negotiation,
+// 9 outils, alignés sur l'API DEALR réelle (Edge Functions /discovery,
+// /negotiate, /negotiations, /transaction-room, /profile) :
+//   dealr_search, dealr_get_listing, dealr_get_profile, dealr_start_negotiation,
 //   dealr_make_offer, dealr_get_negotiation, dealr_accept_offer,
 //   dealr_reject_offer, dealr_finalize_transaction
 //
@@ -77,12 +77,16 @@ const TRANSACTION_MODES = ["hand_delivery", "parcel", "seller_delivery", "pickup
 // précise (extraite de son Authorization header — voir app.post("/mcp")
 // plus bas), jamais une clé globale au serveur.
 function getServer(apiKey) {
-  const server = new McpServer({ name: "dealr", version: "3.0.0" });
+  const server = new McpServer({ name: "dealr", version: "4.0.0" });
 
   server.registerTool(
     "dealr_search",
     {
-      description: "Cherche des annonces disponibles sur DEALR. Utilise cet outil en premier quand l'utilisateur veut acheter quelque chose.",
+      description:
+        "Cherche des annonces disponibles sur DEALR (exclut automatiquement les propres annonces de l'utilisateur connecté — " +
+        "il ne peut pas négocier avec lui-même). Utilise cet outil en premier quand l'utilisateur veut acheter quelque chose. " +
+        "Chaque résultat inclut cover_url : si présent, affiche la photo dans ta réponse avec la syntaxe Markdown ![titre](cover_url) " +
+        "plutôt que de simplement donner l'URL en texte.",
       inputSchema: {
         product: z.string().optional().describe("Ce que l'utilisateur cherche à acheter"),
         category: z.string().optional(),
@@ -102,21 +106,34 @@ function getServer(apiKey) {
   server.registerTool(
     "dealr_get_listing",
     {
-      description: "Récupère le détail d'une annonce précise par son id.",
+      description:
+        "Récupère le détail d'une annonce précise par son id, avec toutes ses photos (champ images). Affiche chaque photo dans ta " +
+        "réponse avec la syntaxe Markdown ![titre](url) plutôt que de juste donner les URLs en texte. Si is_own_listing est true, " +
+        "c'est une annonce de l'utilisateur lui-même — ne propose jamais de négocier dessus.",
       inputSchema: { listing_id: z.string() },
     },
-    async ({ listing_id }) => {
-      const data = await dealrGet(apiKey, `/discovery?q=${encodeURIComponent(listing_id)}`);
-      const listing = (data.listings || []).find((l) => l.id === listing_id);
-      if (!listing) throw new Error("Annonce introuvable");
-      return textResult({ listing });
-    }
+    async ({ listing_id }) => textResult(await dealrGet(apiKey, `/discovery?id=${encodeURIComponent(listing_id)}`))
+  );
+
+  server.registerTool(
+    "dealr_get_profile",
+    {
+      description:
+        "Renvoie les informations déjà enregistrées par l'utilisateur dans son compte DEALR (nom, adresse, moyen de paiement par défaut). " +
+        "Appelle cet outil AVANT de demander ces informations à l'utilisateur pour finaliser une transaction — s'il les a déjà renseignées, " +
+        "ne les redemande jamais.",
+      inputSchema: {},
+    },
+    async () => textResult(await dealrGet(apiKey, "/profile"))
   );
 
   server.registerTool(
     "dealr_start_negotiation",
     {
-      description: "Démarre une négociation acheteur sur une annonce choisie. Le budget maximum de l'acheteur doit rester privé et ne jamais être envoyé comme prix d'ouverture.",
+      description:
+        "Démarre une négociation acheteur sur une annonce choisie. Le budget maximum de l'acheteur doit rester privé et ne jamais " +
+        "être envoyé comme prix d'ouverture. Refusé si l'annonce appartient à l'utilisateur connecté (dealr_search l'exclut déjà " +
+        "des résultats, mais vérifie is_own_listing si l'id vient d'ailleurs).",
       inputSchema: {
         listing_id: z.string(),
         opening_price: z.number().describe("Première offre — doit rester en dessous du budget max privé de l'acheteur"),
@@ -177,8 +194,9 @@ function getServer(apiKey) {
     {
       description:
         `Crée ou met à jour la Transaction Room structurée après un accord (negotiations.status = agreement_reached). ` +
-        `Modes disponibles : ${TRANSACTION_MODES.join(", ")}. Si des champs requis manquent pour le mode choisi, ` +
-        `la réponse renverra "needs_information" — redemande alors les champs manquants à l'utilisateur plutôt que d'ouvrir un chat libre.`,
+        `Les champs déjà présents dans le compte de l'utilisateur (voir dealr_get_profile) sont automatiquement repris — ` +
+        `inutile de les redemander. Modes disponibles : ${TRANSACTION_MODES.join(", ")}. Si des champs requis manquent pour le mode choisi, ` +
+        `la réponse renverra "needs_information" — redemande alors uniquement les champs manquants à l'utilisateur plutôt que d'ouvrir un chat libre.`,
       inputSchema: {
         negotiation_id: z.string(),
         mode: z.enum(TRANSACTION_MODES),

@@ -17,11 +17,31 @@
 // ============================================================================
 import crypto from "node:crypto";
 import express from "express";
+import { labelForRedirect, verifyPkce } from "./oauth-helpers.js";
 
 export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   const router = express.Router();
-  router.use(express.json({ limit: "1mb" }));
-  router.use(express.urlencoded({ extended: true }));
+  // Appliqués À LA FOIS en global sur le router ET en garde par route (voir
+  // parseBody plus bas) — après un crash en prod où req.body arrivait
+  // undefined malgré ce .use(), mieux vaut ne pas dépendre d'un seul point
+  // d'attache pour un flow aussi critique que le login.
+  const bodyParsers = [express.urlencoded({ extended: true }), express.json()];
+  router.use(bodyParsers);
+
+  // Filet de sécurité : si, pour une raison quelconque (proxy, version
+  // d'Express, ordre de middleware), req.body arrive quand même vide,
+  // on répond proprement plutôt que de crasher avec une TypeError brute.
+  function requireBody(req, res, asJson = false) {
+    if (!req.body || typeof req.body !== "object") {
+      if (asJson) {
+        res.status(400).json({ error: "invalid_request", error_description: "Corps de requête illisible." });
+      } else {
+        res.status(400).send("Requête invalide : impossible de lire les données du formulaire. Réessaie, et si ça persiste, contacte le support DEALR.");
+      }
+      return false;
+    }
+    return true;
+  }
 
   // Stockage en mémoire — suffisant pour un serveur mono-instance. Les codes
   // et clients expirent vite (codes) ou sont peu nombreux (un client par
@@ -63,9 +83,9 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   // Enregistrement dynamique de client (RFC 7591, version minimale) —
   // Claude/ChatGPT s'auto-enregistrent au premier ajout du connecteur.
   // ---------------------------------------------------------------------
-  router.post("/oauth/register", (req, res) => {
-    const body = req.body ?? {};
-    const redirectUris = body.redirect_uris || [];
+  router.post("/oauth/register", ...bodyParsers, (req, res) => {
+    if (!requireBody(req, res, true)) return;
+    const redirectUris = req.body.redirect_uris || [];
     if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
       return res.status(400).json({ error: "invalid_client_metadata", error_description: "redirect_uris requis" });
     }
@@ -110,14 +130,10 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
     res.send(loginPageHtml({ response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope, error: null }));
   });
 
-  router.post("/oauth/authorize", async (req, res) => {
-    const body = req.body ?? {};
-    const { email, password, response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope } = body;
+  router.post("/oauth/authorize", ...bodyParsers, async (req, res) => {
+    if (!requireBody(req, res)) return;
+    const { email, password, response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope } = req.body;
     const oauthParams = { response_type, client_id, redirect_uri, state, code_challenge, code_challenge_method, scope };
-
-    if (!email || !password || !response_type || !client_id || !redirect_uri || !code_challenge) {
-      return res.status(400).send(loginPageHtml({ ...oauthParams, error: "Paramètres OAuth manquants." }));
-    }
 
     try {
       // 1) Connexion Supabase Auth — exactement le même mécanisme que le site web.
@@ -131,8 +147,10 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
         return res.status(401).send(loginPageHtml({ ...oauthParams, error: "Email ou mot de passe incorrect." }));
       }
 
-      // 2) Mint une clé dlr_live_... pour CET utilisateur — réutilise create_api_key()
-      //    tel quel, avec son propre token Supabase (donc auth.uid() correct côté RLS).
+      // 2) Mint une clé dlr_live_... pour CET utilisateur, une par application
+      //    connectée (Claude, ChatGPT...) — réutilise create_api_key(), avec le
+      //    propre token Supabase de l'utilisateur (donc auth.uid() correct côté RLS).
+      const appLabel = labelForRedirect(redirect_uri);
       const keyRes = await fetch(`${supabaseUrl}/rest/v1/rpc/create_api_key`, {
         method: "POST",
         headers: {
@@ -140,7 +158,7 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
           Authorization: `Bearer ${authData.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ p_label: appLabel }),
       });
       const keyData = await keyRes.json();
       if (!keyRes.ok || !keyData.api_key) {
@@ -171,9 +189,9 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
   // Échange du code contre le token d'accès (= la clé dlr_live_ minée à
   // l'étape précédente). Vérifie PKCE avant de la livrer.
   // ---------------------------------------------------------------------
-  router.post("/oauth/token", (req, res) => {
-    const body = req.body ?? {};
-    const { grant_type, code, redirect_uri, code_verifier } = body;
+  router.post("/oauth/token", ...bodyParsers, (req, res) => {
+    if (!requireBody(req, res, true)) return;
+    const { grant_type, code, redirect_uri, code_verifier } = req.body;
 
     if (grant_type !== "authorization_code") {
       return res.status(400).json({ error: "unsupported_grant_type" });
@@ -188,8 +206,7 @@ export function createOAuthRouter({ supabaseUrl, supabaseAnonKey, publicUrl }) {
       return res.status(400).json({ error: "invalid_grant", error_description: "redirect_uri ne correspond pas." });
     }
 
-    const computedChallenge = crypto.createHash("sha256").update(code_verifier || "").digest("base64url");
-    if (computedChallenge !== entry.codeChallenge) {
+    if (!verifyPkce(code_verifier, entry.codeChallenge)) {
       return res.status(400).json({ error: "invalid_grant", error_description: "code_verifier invalide (PKCE)." });
     }
 

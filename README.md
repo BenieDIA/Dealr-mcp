@@ -53,18 +53,35 @@ Le serveur MCP ne devient donc pas une nouvelle base d'utilisateurs : **Supabase
 
 Aucune base d'utilisateurs à gérer côté serveur MCP : tout repose sur **Supabase Auth** (déjà en place) et les clés `dlr_live_...` existantes.
 
-## 8 outils
+**Un seul assistant connecté à la fois.** Se connecter avec un nouvel
+assistant (ou reconnecter le même) remplace automatiquement la connexion
+précédente — `create_api_key()` supprime toute clé existante avant d'en
+créer une nouvelle. Aucune mention de "clé API" n'apparaît côté utilisateur :
+l'onglet "Avancé" du dashboard affiche juste quel assistant est connecté et
+depuis quand.
 
-| Outil                        | Fait quoi                                           |
-| ---------------------------- | --------------------------------------------------- |
-| `dealr_search`               | Cherche des annonces disponibles                    |
-| `dealr_get_listing`          | Affiche le détail d'une annonce                     |
-| `dealr_start_negotiation`    | Démarre une négociation (1re offre)                 |
-| `dealr_make_offer`           | Fait une contre-offre sur une négociation existante |
-| `dealr_get_negotiation`      | Affiche l'historique/la timeline d'une négociation  |
-| `dealr_accept_offer`         | Accepte le prix proposé                             |
-| `dealr_reject_offer`         | Rejette l'offre et clôt la négociation sans accord  |
-| `dealr_finalize_transaction` | Crée/complète la Transaction Room après accord      |
+**Les photos s'affichent dans la conversation.** Les descriptions des outils
+`dealr_search` et `dealr_get_listing` demandent explicitement au modèle
+d'afficher les photos en Markdown (`![titre](url)`) plutôt que de donner les
+URLs en texte brut.
+
+## 9 outils
+
+| Outil | Fait quoi |
+|---|---|
+| `dealr_search` | Cherche des annonces disponibles (multi-mots, tolérant aux fautes) |
+| `dealr_get_listing` | Détail d'une annonce, avec toutes ses photos |
+| `dealr_get_profile` | Infos déjà enregistrées par l'utilisateur (nom, adresse, paiement) — à appeler avant de les redemander |
+| `dealr_start_negotiation` | Démarre une négociation (1ère offre) |
+| `dealr_make_offer` | Contre-offre sur une négociation existante |
+| `dealr_get_negotiation` | Historique/timeline d'une négociation |
+| `dealr_accept_offer` | Accepte le prix sur la table |
+| `dealr_reject_offer` | Rejette et clôt sans accord |
+| `dealr_finalize_transaction` | Crée/complète la Transaction Room après accord (pré-remplie depuis le compte) |
+
+Chaque connexion OAuth mine une clé **par application** (Claude, ChatGPT...),
+remplacée à la reconnexion plutôt qu'accumulée — voir `create_api_key(p_label)`
+côté base.
 
 ## 1. Installer
 
@@ -151,3 +168,17 @@ Même serveur, même URL, mêmes outils — mais **une authentification et des p
 ```
 
 **Un seul serveur. Une seule URL. Plusieurs utilisateurs. Plusieurs assistants IA. Une identité DEALR par utilisateur.**
+Même chose côté ChatGPT (Developer Mode → app MCP personnalisée).
+
+## Tests et CI
+
+```bash
+npm test
+```
+
+8 tests (`node --test`) couvrent la détection d'application par redirect_uri
+et la vérification PKCE — la logique la plus sensible du flow OAuth, extraite
+dans `src/oauth-helpers.js` pour être testable indépendamment d'Express.
+
+`.github/workflows/ci.yml` installe, teste, et vérifie que le serveur démarre
+réellement sur chaque push/PR.
