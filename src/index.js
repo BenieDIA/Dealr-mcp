@@ -30,6 +30,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import * as z from "zod/v4";
 import { createOAuthRouter } from "./oauth.js";
+import { imageContentBlocks } from "./image-content.js";
 
 const configuredBaseUrl = process.env.DEALR_BASE_URL;
 const DEALR_BASE_URL = configuredBaseUrl
@@ -68,6 +69,16 @@ function textResult(data) {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 
+async function listingResult(data, images) {
+  const imageBlocks = await imageContentBlocks(images, SUPABASE_URL);
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(data, null, 2) },
+      ...imageBlocks,
+    ],
+  };
+}
+
 // Modes de transaction acceptés par /transaction-room, et leurs champs requis
 // (dupliqué côté backend pour validation finale — ici c'est indicatif pour
 // que l'agent sache quoi demander à l'utilisateur avant d'appeler l'outil).
@@ -85,8 +96,8 @@ function getServer(apiKey) {
       description:
         "Cherche des annonces disponibles sur DEALR (exclut automatiquement les propres annonces de l'utilisateur connecté — " +
         "il ne peut pas négocier avec lui-même). Utilise cet outil en premier quand l'utilisateur veut acheter quelque chose. " +
-        "Chaque résultat inclut cover_url : si présent, affiche la photo dans ta réponse avec la syntaxe Markdown ![titre](cover_url) " +
-        "plutôt que de simplement donner l'URL en texte.",
+        "Les photos des quatre premières annonces sont jointes directement au résultat. Utilise-les pour présenter les annonces avec " +
+        "leur titre et leur prix, au lieu de laisser l'utilisateur ouvrir chaque annonce pour voir les images.",
       inputSchema: {
         product: z.string().optional().describe("Ce que l'utilisateur cherche à acheter"),
         category: z.string().optional(),
@@ -99,7 +110,9 @@ function getServer(apiKey) {
       if (product) params.set("q", product);
       if (category) params.set("category", category);
       if (city) params.set("city", city);
-      return textResult(await dealrGet(apiKey, `/discovery?${params}`));
+      const data = await dealrGet(apiKey, `/discovery?${params}`);
+      const images = (data.listings ?? []).map((listing) => ({ url: listing.cover_url, label: listing.title }));
+      return listingResult(data, images);
     }
   );
 
@@ -107,12 +120,18 @@ function getServer(apiKey) {
     "dealr_get_listing",
     {
       description:
-        "Récupère le détail d'une annonce précise par son id, avec toutes ses photos (champ images). Affiche chaque photo dans ta " +
-        "réponse avec la syntaxe Markdown ![titre](url) plutôt que de juste donner les URLs en texte. Si is_own_listing est true, " +
+        "Récupère le détail d'une annonce précise par son id. Ses photos sont jointes directement au résultat. Si is_own_listing est true, " +
         "c'est une annonce de l'utilisateur lui-même — ne propose jamais de négocier dessus.",
       inputSchema: { listing_id: z.string() },
     },
-    async ({ listing_id }) => textResult(await dealrGet(apiKey, `/discovery?id=${encodeURIComponent(listing_id)}`))
+    async ({ listing_id }) => {
+      const data = await dealrGet(apiKey, `/discovery?id=${encodeURIComponent(listing_id)}`);
+      const images = (data.images ?? []).map((url, index) => ({
+        url,
+        label: `${data.listing?.title || "Annonce"}${index ? ` — photo ${index + 1}` : ""}`,
+      }));
+      return listingResult(data, images);
+    }
   );
 
   server.registerTool(
