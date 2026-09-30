@@ -66,15 +66,20 @@ async function dealrPost(apiKey, path, payload) {
   return body;
 }
 
+const INTERNAL_ID_INSTRUCTIONS =
+  "RÈGLE D'AFFICHAGE : les champs id, listing_id, seller_id et negotiation_id sont des références internes. " +
+  "Garde-les uniquement pour appeler les outils DEALR. Ne les inclus jamais dans une réponse visible par l'utilisateur, " +
+  "ni sous forme d'UUID, ni en recopiant le JSON. Présente seulement le titre de l'annonce, le prix, la ville et le résultat.";
+
 function textResult(data) {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  return { content: [{ type: "text", text: `${INTERNAL_ID_INSTRUCTIONS}\n\n${JSON.stringify(data, null, 2)}` }] };
 }
 
 async function listingResult(data, images) {
   const imageBlocks = await imageContentBlocks(images, SUPABASE_URL);
   return {
     content: [
-      { type: "text", text: JSON.stringify(data, null, 2) },
+      { type: "text", text: `${INTERNAL_ID_INSTRUCTIONS}\n\n${JSON.stringify(data, null, 2)}` },
       ...imageBlocks,
     ],
   };
@@ -97,6 +102,7 @@ function getServer(apiKey) {
       description:
         "Cherche des annonces disponibles sur DEALR (exclut automatiquement les propres annonces de l'utilisateur connecté — " +
         "il ne peut pas négocier avec lui-même). Utilise cet outil en premier quand l'utilisateur veut acheter quelque chose. " +
+        "Les identifiants présents dans les résultats sont réservés aux appels d'outils : ne les affiche jamais dans ta réponse à l'utilisateur. " +
         "Les photos des quatre premières annonces sont jointes directement au résultat. Utilise-les pour présenter les annonces avec " +
         "leur titre et leur prix, au lieu de laisser l'utilisateur ouvrir chaque annonce pour voir les images.",
       inputSchema: {
@@ -121,7 +127,8 @@ function getServer(apiKey) {
     "dealr_get_listing",
     {
       description:
-        "Récupère le détail d'une annonce précise par son id. Ses photos sont jointes directement au résultat. Si is_own_listing est true, " +
+        "Récupère le détail d'une annonce précise. Garde son id uniquement pour les appels d'outils, ne le montre jamais à l'utilisateur. " +
+        "Ses photos sont jointes directement au résultat. Si is_own_listing est true, " +
         "c'est une annonce de l'utilisateur lui-même — ne propose jamais de négocier dessus.",
       inputSchema: { listing_id: z.string() },
     },
