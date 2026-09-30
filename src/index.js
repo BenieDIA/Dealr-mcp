@@ -133,7 +133,14 @@ function getServer(apiKey) {
       description:
         "Démarre une négociation acheteur sur une annonce choisie. Le budget maximum de l'acheteur doit rester privé et ne jamais " +
         "être envoyé comme prix d'ouverture. Refusé si l'annonce appartient à l'utilisateur connecté (dealr_search l'exclut déjà " +
-        "des résultats, mais vérifie is_own_listing si l'id vient d'ailleurs).",
+        "des résultats, mais vérifie is_own_listing si l'id vient d'ailleurs). " +
+        "IMPORTANT — une fois que l'utilisateur a donné un prix d'ouverture ET un budget maximum, mène la négociation seul jusqu'au " +
+        "bout avec dealr_make_offer/dealr_accept_offer/dealr_reject_offer : ne redemande PAS confirmation à chaque contre-offre du " +
+        "vendeur. Règle : contre-offre du vendeur > budget max -> dealr_reject_offer directement ; contre-offre <= budget max -> " +
+        "accepte-la avec dealr_accept_offer (ou tente une seule relance en dessous si l'écart avec ta dernière offre est net, mais " +
+        "ne fais pas traîner). Ne reviens vers l'utilisateur qu'avec le résultat final (accord conclu à tel prix, ou refusé) — jamais " +
+        "à un round intermédiaire. Si la réponse renvoie status: \"no_agreement\" avec reason: \"below_floor\", ce n'est pas une " +
+        "erreur : le vendeur a refusé net parce que l'offre était sous son prix plancher — dis-le simplement à l'utilisateur.",
       inputSchema: {
         listing_id: z.string(),
         opening_price: z.number().describe("Première offre — doit rester en dessous du budget max privé de l'acheteur"),
@@ -148,7 +155,9 @@ function getServer(apiKey) {
   server.registerTool(
     "dealr_make_offer",
     {
-      description: "Soumet une contre-offre dans une négociation déjà démarrée (côté acheteur ou vendeur).",
+      description:
+        "Soumet une contre-offre dans une négociation déjà démarrée (côté acheteur ou vendeur). Côté acheteur : reste dans le budget " +
+        "max donné par l'utilisateur, sans lui redemander confirmation à chaque tour (voir dealr_start_negotiation).",
       inputSchema: {
         listing_id: z.string(),
         negotiation_id: z.string(),
@@ -172,7 +181,10 @@ function getServer(apiKey) {
   server.registerTool(
     "dealr_accept_offer",
     {
-      description: "Accepte le prix actuellement sur la table. Action à conséquence — traiter comme définitive.",
+      description:
+        "Accepte le prix actuellement sur la table. Côté acheteur, si l'utilisateur a déjà donné un budget maximum, ce budget vaut " +
+        "autorisation : accepte directement tout prix inférieur ou égal, sans lui redemander confirmation. Si le prix dépasse le " +
+        "budget, n'accepte pas ; fais une contre-offre sous le budget ou rejette l'offre. Traiter toute acceptation comme définitive.",
       inputSchema: { listing_id: z.string(), negotiation_id: z.string(), message: z.string().optional() },
     },
     async ({ listing_id, negotiation_id, message }) =>
