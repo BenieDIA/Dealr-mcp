@@ -31,6 +31,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import * as z from "zod/v4";
 import { createOAuthRouter } from "./oauth.js";
 import { imageContentBlocks } from "./image-content.js";
+import { negotiateWithinBudget } from "./buyer-negotiation.js";
 
 const configuredBaseUrl = process.env.DEALR_BASE_URL;
 const DEALR_BASE_URL = configuredBaseUrl
@@ -150,25 +151,44 @@ function getServer(apiKey) {
     "dealr_start_negotiation",
     {
       description:
-        "Démarre une négociation acheteur sur une annonce choisie. Le budget maximum de l'acheteur doit rester privé et ne jamais " +
-        "être envoyé comme prix d'ouverture. Refusé si l'annonce appartient à l'utilisateur connecté (dealr_search l'exclut déjà " +
-        "des résultats, mais vérifie is_own_listing si l'id vient d'ailleurs). " +
-        "IMPORTANT — une fois que l'utilisateur a donné un prix d'ouverture ET un budget maximum, mène la négociation seul jusqu'au " +
-        "bout avec dealr_make_offer/dealr_accept_offer/dealr_reject_offer : ne redemande PAS confirmation à chaque contre-offre du " +
-        "vendeur. Règle : contre-offre du vendeur > budget max -> dealr_reject_offer directement ; contre-offre <= budget max -> " +
-        "accepte-la avec dealr_accept_offer (ou tente une seule relance en dessous si l'écart avec ta dernière offre est net, mais " +
-        "ne fais pas traîner). Ne reviens vers l'utilisateur qu'avec le résultat final (accord conclu à tel prix, ou refusé) — jamais " +
-        "à un round intermédiaire. Si la réponse renvoie status: \"no_agreement\" avec reason: \"below_floor\", ce n'est pas une " +
-        "erreur : le vendeur a refusé net parce que l'offre était sous son prix plancher — dis-le simplement à l'utilisateur.",
+        "Démarre et mène automatiquement une négociation acheteur. Reçois le prix de départ et le budget maximum de l'acheteur. " +
+        "Le serveur MCP envoie le prix de départ, puis fait jusqu'à deux contre-offres progressives si le vendeur demande plus que le " +
+        "budget. Il accepte automatiquement tout prix inférieur ou égal au budget, et refuse si le vendeur reste au-dessus. " +
+        "Le budget maximum reste dans le serveur MCP : il n'est jamais envoyé au vendeur. Ne demande pas de confirmation entre les tours; " +
+        "annonce seulement le résultat final. Si l'offre de départ dépasse le budget, l'outil la refuse sans démarrer la négociation. " +
+        "Si la réponse indique reason: \"below_floor\", le vendeur a refusé parce que l'offre était sous son prix minimum.",
       inputSchema: {
         listing_id: z.string(),
-        opening_price: z.number().describe("Première offre — doit rester en dessous du budget max privé de l'acheteur"),
+        opening_price: z.number().positive().describe("Première offre proposée par l'acheteur"),
+        budget_max: z.number().positive().describe("Montant maximum autorisé par l'acheteur. Gardé privé; jamais transmis au vendeur."),
         shipping_method: z.string().optional(),
         message: z.string().optional(),
       },
     },
-    async ({ listing_id, opening_price, shipping_method, message }) =>
-      textResult(await dealrPost(apiKey, "/negotiate", { listing_id, action: "propose", price: opening_price, shipping_method, message }))
+    async ({ listing_id, opening_price, budget_max, shipping_method, message }) => {
+      const result = await negotiateWithinBudget({
+        openingPrice: opening_price,
+        budgetMax: budget_max,
+        propose: (price, negotiation_id) => dealrPost(apiKey, "/negotiate", {
+          listing_id,
+          negotiation_id,
+          action: "propose",
+          price,
+          shipping_method,
+          message: negotiation_id ? undefined : message,
+        }),
+        accept: (negotiation_id) => dealrPost(apiKey, "/negotiate", {
+          listing_id, negotiation_id, action: "accept",
+        }),
+        reject: (negotiation_id) => dealrPost(apiKey, "/negotiate", {
+          listing_id,
+          negotiation_id,
+          action: "reject",
+          message: "Je ne donne pas suite à cette proposition.",
+        }),
+      });
+      return textResult(result);
+    }
   );
 
   server.registerTool(
