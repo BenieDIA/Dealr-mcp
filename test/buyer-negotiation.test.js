@@ -67,6 +67,51 @@ test("rejects after two counteroffers remain above the budget", async () => {
   assert.deepEqual(result.buyer_offers, [381, 392, 397]);
 });
 
+test("raises a below-floor opening offer automatically and accepts within budget", async () => {
+  const proposed = [];
+  const responses = [
+    { status: "no_agreement", reason: "below_floor" },
+    { status: "active", negotiation_id: "n-3", price_on_table: 498 },
+  ];
+
+  const result = await negotiateWithinBudget({
+    openingPrice: 400,
+    budgetMax: 500,
+    propose: async (price, negotiationId) => {
+      proposed.push({ price, negotiationId });
+      return responses.shift();
+    },
+    accept: async (negotiationId) => ({ status: "agreement_reached", negotiationId, price: 498 }),
+    reject: async () => assert.fail("must not reject an offer within budget"),
+  });
+
+  assert.deepEqual(proposed, [
+    { price: 400, negotiationId: undefined },
+    { price: 450, negotiationId: undefined },
+  ]);
+  assert.deepEqual(result.buyer_offers, [400, 450]);
+  assert.equal(result.status, "agreement_reached");
+  assert.equal(result.price, 498);
+});
+
+test("bounds below-floor retries at the buyer's maximum", async () => {
+  const proposed = [];
+  const result = await negotiateWithinBudget({
+    openingPrice: 400,
+    budgetMax: 500,
+    propose: async (price) => {
+      proposed.push(price);
+      return { status: "no_agreement", reason: "below_floor" };
+    },
+    accept: async () => assert.fail("must not accept a below-floor offer"),
+    reject: async () => assert.fail("the backend already closed below-floor negotiations"),
+  });
+
+  assert.deepEqual(proposed, [400, 450, 475, 500]);
+  assert.deepEqual(result.buyer_offers, [400, 450, 475, 500]);
+  assert.equal(result.reason, "below_floor");
+});
+
 test("does not start a negotiation if the opening offer is over budget", async () => {
   let proposeCalled = false;
 

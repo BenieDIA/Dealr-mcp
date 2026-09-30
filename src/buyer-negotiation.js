@@ -1,4 +1,5 @@
 const MAX_BUYER_COUNTERS = 2;
+const MAX_BELOW_FLOOR_RETRIES = 3;
 const COUNTER_STEP = 0.6;
 
 function nextOffer(currentOffer, budgetMax) {
@@ -19,6 +20,23 @@ export async function negotiateWithinBudget({ openingPrice, budgetMax, propose, 
 
   const buyerOffers = [openingPrice];
   let response = await propose(openingPrice);
+  let belowFloorRetries = 0;
+
+  while (
+    response?.status === "no_agreement" &&
+    response.reason === "below_floor" &&
+    belowFloorRetries < MAX_BELOW_FLOOR_RETRIES &&
+    buyerOffers.at(-1) < budgetMax
+  ) {
+    const nextOpening = belowFloorRetries === MAX_BELOW_FLOOR_RETRIES - 1
+      ? budgetMax
+      : Math.ceil((buyerOffers.at(-1) + budgetMax) / 2);
+    if (nextOpening <= buyerOffers.at(-1)) break;
+
+    buyerOffers.push(nextOpening);
+    belowFloorRetries += 1;
+    response = await propose(nextOpening);
+  }
 
   for (let counter = 0; counter <= MAX_BUYER_COUNTERS; counter += 1) {
     if (response?.status !== "active" || typeof response.price_on_table !== "number") {

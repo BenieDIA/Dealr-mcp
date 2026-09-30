@@ -152,11 +152,14 @@ function getServer(apiKey) {
     {
       description:
         "Démarre et mène automatiquement une négociation acheteur. Reçois le prix de départ et le budget maximum de l'acheteur. " +
+        "Si le vendeur refuse l'offre parce qu'elle est sous son prix minimum, augmente automatiquement l'offre de départ par paliers, " +
+        "jusqu'à trois nouvelles tentatives et sans jamais dépasser le budget. " +
         "Le serveur MCP envoie le prix de départ, puis fait jusqu'à deux contre-offres progressives si le vendeur demande plus que le " +
         "budget. Il accepte automatiquement tout prix inférieur ou égal au budget, et refuse si le vendeur reste au-dessus. " +
         "Le budget maximum reste dans le serveur MCP : il n'est jamais envoyé au vendeur. Ne demande pas de confirmation entre les tours; " +
-        "annonce seulement le résultat final. Si l'offre de départ dépasse le budget, l'outil la refuse sans démarrer la négociation. " +
-        "Si la réponse indique reason: \"below_floor\", le vendeur a refusé parce que l'offre était sous son prix minimum.",
+        "annonce seulement le résultat final. Si toutes les tentatives sont refusées sous le prix minimum, indique qu'aucun accord n'est " +
+        "possible dans le budget donné — ne propose pas de recommencer avec une offre déjà tentée. Si l'offre de départ dépasse le budget, " +
+        "l'outil la refuse sans démarrer la négociation.",
       inputSchema: {
         listing_id: z.string(),
         opening_price: z.number().positive().describe("Première offre proposée par l'acheteur"),
